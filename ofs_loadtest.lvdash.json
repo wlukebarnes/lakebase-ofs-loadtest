@@ -1,0 +1,1585 @@
+{
+  "datasets": [
+    {
+      "name": "ds_history",
+      "displayName": "Locust history (latest notebook 03 run)",
+      "queryLines": [
+        "WITH latest AS (SELECT run_id FROM ofs_loadtest_runs WHERE notebook = '03_locust_run' ",
+        "ORDER BY started_at DESC LIMIT 1) ",
+        "SELECT h.ts, h.phase, h.requests_per_s AS qps, h.p50_ms, h.p95_ms, h.p99_ms, h.user_count, h.failures_per_s, ",
+        "CAST(FLOOR((unix_timestamp(h.ts) - MIN(unix_timestamp(h.ts)) OVER ()) / 10) * 10 AS INT) AS elapsed_s ",
+        "FROM ofs_loadtest_history h JOIN latest USING (run_id) "
+      ]
+    },
+    {
+      "name": "ds_runs",
+      "displayName": "Phase results",
+      "queryLines": [
+        "SELECT started_at, notebook, phase, COALESCE(access_path, 'fs') AS access_path, endpoint, users, duration_seconds, ",
+        " requests, failures, qps, p50_ms, p95_ms, p99_ms, error_rate, ",
+        " slo_p95_ms, slo_pass, notes ",
+        " FROM ofs_loadtest_runs "
+      ]
+    },
+    {
+      "name": "ds_failures",
+      "displayName": "Locust failures (latest notebook 03 run)",
+      "queryLines": [
+        "WITH latest AS (SELECT run_id FROM ofs_loadtest_runs WHERE notebook = '03_locust_run' ",
+        "ORDER BY started_at DESC LIMIT 1) ",
+        "SELECT f.run_id, f.phase, f.request_name, f.error, f.occurrences, f.classified ",
+        "FROM ofs_loadtest_failures f JOIN latest USING (run_id) "
+      ]
+    },
+    {
+      "name": "ds_fs_phases",
+      "displayName": "Feature Serving phase results (latest run per notebook)",
+      "queryLines": [
+        "SELECT phase, qps, p95_ms FROM ofs_loadtest_runs ",
+        "WHERE COALESCE(access_path, 'fs') = 'fs' AND notebook IN ('03_locust_run', '06_soak', '07_recovery') ",
+        "QUALIFY started_at = MAX(started_at) OVER (PARTITION BY notebook) "
+      ]
+    },
+    {
+      "name": "ds_path_ladder",
+      "displayName": "Access-path target-QPS ladder (per 05 run)",
+      "queryLines": [
+        "WITH r0 AS ( ",
+        "  SELECT * FROM ofs_loadtest_runs WHERE notebook = '05_stress' AND target_qps IS NOT NULL ), ",
+        "runs AS ( ",
+        "  SELECT run_id, CONCAT(date_format(MIN(started_at), 'yyyy-MM-dd HH:mm'), ' UTC \u00b7 ', LEFT(run_id, 8), ' \u00b7 ', ",
+        "    CASE WHEN size(collect_set(lakebase_min_cu)) = 0 THEN 'sizes not recorded' ",
+        "         ELSE CONCAT('Lakebase ', array_join(transform(sort_array(collect_set(named_struct('lo', CAST(lakebase_min_cu AS INT), 'hi', CAST(lakebase_max_cu AS INT)))), ",
+        "              s -> CONCAT(CAST(s.lo AS STRING), CASE WHEN s.hi <> s.lo THEN CONCAT('-', CAST(s.hi AS STRING)) ELSE '' END)), '/'), ' CU', ",
+        "              CASE WHEN size(collect_set(min_provisioned_concurrency)) = 0 THEN '' ",
+        "                   ELSE CONCAT(' \u00b7 FS ', array_join(transform(sort_array(collect_set(named_struct('lo', CAST(min_provisioned_concurrency AS INT), 'hi', CAST(max_provisioned_concurrency AS INT)))), s -> CONCAT(CAST(s.lo AS STRING), '-', CAST(s.hi AS STRING))), ', ')) END) END, ",
+        "    ' \u00b7 ', CAST(COUNT(DISTINCT access_path) AS STRING), ' paths') AS run_label ",
+        "  FROM r0 GROUP BY run_id ), ",
+        "r AS (SELECT r0.*, runs.run_label FROM r0 JOIN runs USING (run_id)) ",
+        "SELECT r.run_label, r.access_path, CONCAT(CASE r.access_path WHEN 'fs' THEN 'Feature Serving' WHEN 'dataapi' THEN 'Data API' WHEN 'pg' THEN 'Direct Postgres' WHEN 'pg_pooled' THEN 'Pooled Postgres' ELSE r.access_path END, ' \u00b7 ', COALESCE(r.config, 'unlabelled')) AS series, r.config, CAST(r.target_qps AS INT) AS target_qps, r.qps AS achieved_qps, ",
+        "  r.p50_ms, r.p95_ms, r.p99_ms, r.failures, r.users AS connections, r.peak_inflight, ",
+        "  r.client_cpu, r.client_bound, r.slo_pass ",
+        "FROM r "
+      ]
+    },
+    {
+      "name": "ds_path_menu",
+      "displayName": "Latency menu (per 05 run)",
+      "queryLines": [
+        "WITH r0 AS ( ",
+        "  SELECT * FROM ofs_loadtest_runs WHERE notebook = '05_stress' AND target_qps IS NOT NULL ), ",
+        "runs AS ( ",
+        "  SELECT run_id, CONCAT(date_format(MIN(started_at), 'yyyy-MM-dd HH:mm'), ' UTC \u00b7 ', LEFT(run_id, 8), ' \u00b7 ', ",
+        "    CASE WHEN size(collect_set(lakebase_min_cu)) = 0 THEN 'sizes not recorded' ",
+        "         ELSE CONCAT('Lakebase ', array_join(transform(sort_array(collect_set(named_struct('lo', CAST(lakebase_min_cu AS INT), 'hi', CAST(lakebase_max_cu AS INT)))), ",
+        "              s -> CONCAT(CAST(s.lo AS STRING), CASE WHEN s.hi <> s.lo THEN CONCAT('-', CAST(s.hi AS STRING)) ELSE '' END)), '/'), ' CU', ",
+        "              CASE WHEN size(collect_set(min_provisioned_concurrency)) = 0 THEN '' ",
+        "                   ELSE CONCAT(' \u00b7 FS ', array_join(transform(sort_array(collect_set(named_struct('lo', CAST(min_provisioned_concurrency AS INT), 'hi', CAST(max_provisioned_concurrency AS INT)))), s -> CONCAT(CAST(s.lo AS STRING), '-', CAST(s.hi AS STRING))), ', ')) END) END, ",
+        "    ' \u00b7 ', CAST(COUNT(DISTINCT access_path) AS STRING), ' paths') AS run_label ",
+        "  FROM r0 GROUP BY run_id ), ",
+        "r AS (SELECT r0.*, runs.run_label, CONCAT(CASE r0.access_path WHEN 'fs' THEN 'Feature Serving' WHEN 'dataapi' THEN 'Data API' WHEN 'pg' THEN 'Direct Postgres' WHEN 'pg_pooled' THEN 'Pooled Postgres' ELSE r0.access_path END, ' \u00b7 ', COALESCE(r0.config, 'unlabelled')) AS series FROM r0 JOIN runs USING (run_id)), ",
+        "stable AS ( ",
+        "  SELECT *, ROW_NUMBER() OVER (PARTITION BY run_id, series ORDER BY target_qps DESC) AS rn ",
+        "  FROM r WHERE slo_pass ), ",
+        "broke AS (SELECT run_id, series, CAST(MIN(target_qps) AS INT) AS first_unstable_qps FROM r ",
+        "  WHERE NOT slo_pass AND NOT COALESCE(client_bound, false) GROUP BY run_id, series), ",
+        "keys AS (SELECT DISTINCT run_id, run_label, series FROM r) ",
+        "SELECT k.run_label, k.series, ",
+        "  CASE WHEN s.target_qps IS NULL THEN NULL ",
+        "       WHEN b.first_unstable_qps IS NULL THEN CONCAT('\u2265', CAST(CAST(s.target_qps AS INT) AS STRING)) ",
+        "       ELSE CAST(CAST(s.target_qps AS INT) AS STRING) END AS max_qps_within_slo, ",
+        "  s.p50_ms, s.p95_ms, s.p99_ms, s.users AS connections_at_max, b.first_unstable_qps ",
+        "FROM keys k ",
+        "LEFT JOIN stable s ON s.run_id = k.run_id AND s.series = k.series AND s.rn = 1 ",
+        "LEFT JOIN broke b ON b.run_id = k.run_id AND b.series = k.series ",
+        "ORDER BY k.run_label, s.target_qps DESC NULLS LAST, s.p95_ms "
+      ]
+    },
+    {
+      "name": "ds_at_2k",
+      "displayName": "Latency at 2K QPS by config (per 05 run)",
+      "queryLines": [
+        "WITH r0 AS ( ",
+        "  SELECT * FROM ofs_loadtest_runs WHERE notebook = '05_stress' AND target_qps IS NOT NULL ), ",
+        "runs AS ( ",
+        "  SELECT run_id, CONCAT(date_format(MIN(started_at), 'yyyy-MM-dd HH:mm'), ' UTC \u00b7 ', LEFT(run_id, 8), ' \u00b7 ', ",
+        "    CASE WHEN size(collect_set(lakebase_min_cu)) = 0 THEN 'sizes not recorded' ",
+        "         ELSE CONCAT('Lakebase ', array_join(transform(sort_array(collect_set(named_struct('lo', CAST(lakebase_min_cu AS INT), 'hi', CAST(lakebase_max_cu AS INT)))), ",
+        "              s -> CONCAT(CAST(s.lo AS STRING), CASE WHEN s.hi <> s.lo THEN CONCAT('-', CAST(s.hi AS STRING)) ELSE '' END)), '/'), ' CU', ",
+        "              CASE WHEN size(collect_set(min_provisioned_concurrency)) = 0 THEN '' ",
+        "                   ELSE CONCAT(' \u00b7 FS ', array_join(transform(sort_array(collect_set(named_struct('lo', CAST(min_provisioned_concurrency AS INT), 'hi', CAST(max_provisioned_concurrency AS INT)))), s -> CONCAT(CAST(s.lo AS STRING), '-', CAST(s.hi AS STRING))), ', ')) END) END, ",
+        "    ' \u00b7 ', CAST(COUNT(DISTINCT access_path) AS STRING), ' paths') AS run_label ",
+        "  FROM r0 GROUP BY run_id ), ",
+        "r AS (SELECT r0.*, runs.run_label FROM r0 JOIN runs USING (run_id)) ",
+        "SELECT r.run_label, CASE r.access_path WHEN 'fs' THEN 'Feature Serving' WHEN 'dataapi' THEN 'Data API' WHEN 'pg' THEN 'Direct Postgres' WHEN 'pg_pooled' THEN 'Pooled Postgres' ELSE r.access_path END AS path_label, COALESCE(r.lakebase_min_cu, 0) AS lakebase_cu, ",
+        "  CASE WHEN r.access_path = 'fs' THEN CONCAT(CAST(r.min_provisioned_concurrency AS STRING), '-', ",
+        "    CAST(r.max_provisioned_concurrency AS STRING)) END AS fs_concurrency, ",
+        "  r.qps AS achieved_qps, r.p50_ms, r.p95_ms, r.p99_ms, r.failures, r.slo_pass ",
+        "FROM r WHERE r.target_qps = 2000 ",
+        "ORDER BY r.run_label, r.p95_ms "
+      ]
+    },
+    {
+      "name": "ds_headline",
+      "displayName": "Headline per 05 run",
+      "queryLines": [
+        "WITH r0 AS ( ",
+        "  SELECT * FROM ofs_loadtest_runs WHERE notebook = '05_stress' AND target_qps IS NOT NULL ), ",
+        "runs AS ( ",
+        "  SELECT run_id, CONCAT(date_format(MIN(started_at), 'yyyy-MM-dd HH:mm'), ' UTC \u00b7 ', LEFT(run_id, 8), ' \u00b7 ', ",
+        "    CASE WHEN size(collect_set(lakebase_min_cu)) = 0 THEN 'sizes not recorded' ",
+        "         ELSE CONCAT('Lakebase ', array_join(transform(sort_array(collect_set(named_struct('lo', CAST(lakebase_min_cu AS INT), 'hi', CAST(lakebase_max_cu AS INT)))), ",
+        "              s -> CONCAT(CAST(s.lo AS STRING), CASE WHEN s.hi <> s.lo THEN CONCAT('-', CAST(s.hi AS STRING)) ELSE '' END)), '/'), ' CU', ",
+        "              CASE WHEN size(collect_set(min_provisioned_concurrency)) = 0 THEN '' ",
+        "                   ELSE CONCAT(' \u00b7 FS ', array_join(transform(sort_array(collect_set(named_struct('lo', CAST(min_provisioned_concurrency AS INT), 'hi', CAST(max_provisioned_concurrency AS INT)))), s -> CONCAT(CAST(s.lo AS STRING), '-', CAST(s.hi AS STRING))), ', ')) END) END, ",
+        "    ' \u00b7 ', CAST(COUNT(DISTINCT access_path) AS STRING), ' paths') AS run_label ",
+        "  FROM r0 GROUP BY run_id ), ",
+        "r AS (SELECT r0.*, runs.run_label FROM r0 JOIN runs USING (run_id)) ",
+        "SELECT run_label, ",
+        "  COUNT(DISTINCT CASE WHEN target_qps = 2000 AND slo_pass THEN access_path END) AS paths_meeting_slo_2k, ",
+        "  MIN(CASE WHEN access_path = 'pg' AND target_qps = 2000 AND slo_pass THEN p95_ms END) AS pg_p95_2k, ",
+        "  MIN(CASE WHEN access_path = 'pg_pooled' AND target_qps = 2000 AND slo_pass THEN p95_ms END) AS pooled_p95_2k, ",
+        "  MIN(CASE WHEN access_path = 'fs' AND target_qps = 2000 AND slo_pass THEN p95_ms END) AS fs_p95_2k, ",
+        "  MIN(CASE WHEN access_path = 'dataapi' AND target_qps = 2000 AND slo_pass THEN p95_ms END) AS dataapi_p95_2k ",
+        "FROM r GROUP BY run_label "
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "filters",
+      "displayName": "Filters",
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "filter_run",
+            "queries": [
+              {
+                "name": "q_run_ds_headline",
+                "query": {
+                  "datasetName": "ds_headline",
+                  "fields": [
+                    {
+                      "name": "run_label",
+                      "expression": "`run_label`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "q_run_ds_at_2k",
+                "query": {
+                  "datasetName": "ds_at_2k",
+                  "fields": [
+                    {
+                      "name": "run_label",
+                      "expression": "`run_label`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "q_run_ds_path_menu",
+                "query": {
+                  "datasetName": "ds_path_menu",
+                  "fields": [
+                    {
+                      "name": "run_label",
+                      "expression": "`run_label`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "q_run_ds_path_ladder",
+                "query": {
+                  "datasetName": "ds_path_ladder",
+                  "fields": [
+                    {
+                      "name": "run_label",
+                      "expression": "`run_label`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "run_label",
+                    "displayName": "Run",
+                    "queryName": "q_run_ds_headline"
+                  },
+                  {
+                    "fieldName": "run_label",
+                    "displayName": "Run",
+                    "queryName": "q_run_ds_at_2k"
+                  },
+                  {
+                    "fieldName": "run_label",
+                    "displayName": "Run",
+                    "queryName": "q_run_ds_path_menu"
+                  },
+                  {
+                    "fieldName": "run_label",
+                    "displayName": "Run",
+                    "queryName": "q_run_ds_path_ladder"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Notebook 05 run"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filter_phase",
+            "queries": [
+              {
+                "name": "ds_history_phase",
+                "query": {
+                  "datasetName": "ds_history",
+                  "fields": [
+                    {
+                      "name": "phase",
+                      "expression": "`phase`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "phase",
+                    "displayName": "Phase",
+                    "queryName": "ds_history_phase"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Phase"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filter_notebook",
+            "queries": [
+              {
+                "name": "ds_runs_notebook",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "notebook",
+                      "expression": "`notebook`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "notebook",
+                    "displayName": "Notebook",
+                    "queryName": "ds_runs_notebook"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Notebook"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filter_access_path",
+            "queries": [
+              {
+                "name": "ds_runs_access_path",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "access_path",
+                      "expression": "`access_path`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "access_path",
+                    "displayName": "Access path",
+                    "queryName": "ds_runs_access_path"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Access path"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "overview",
+      "displayName": "Overview",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## OFS online lookup load test: Feature Serving vs Data API vs direct Postgres"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "subtitle",
+            "multilineTextboxSpec": {
+              "lines": [
+                "One Lakebase online table, four ways to read it, at a fixed offered request rate (notebook 05). **Pick a run in the Notebook 05 run filter first**; the tiles and tables below show that run (with none selected they mix every run). Tiles show the best configuration in the run that met the p95 SLO (`P95_SLO_MS`, 25 ms by default) at 2,000 QPS (blank = no configuration met it). See the README's *How to read the results*."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-paths-2k",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_headline",
+                  "fields": [
+                    {
+                      "name": "max(paths_meeting_slo_2k)",
+                      "expression": "MAX(`paths_meeting_slo_2k`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(paths_meeting_slo_2k)",
+                  "displayName": "Paths within the p95 SLO @ 2K QPS",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Paths within the p95 SLO @ 2K QPS"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-pg-2k",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_headline",
+                  "fields": [
+                    {
+                      "name": "max(pg_p95_2k)",
+                      "expression": "MAX(`pg_p95_2k`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(pg_p95_2k)",
+                  "displayName": "Direct Postgres p95 @ 2K (ms)",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Direct Postgres p95 @ 2K (ms)"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-pooled-2k",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_headline",
+                  "fields": [
+                    {
+                      "name": "max(pooled_p95_2k)",
+                      "expression": "MAX(`pooled_p95_2k`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(pooled_p95_2k)",
+                  "displayName": "Pooled Postgres p95 @ 2K (ms)",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Pooled Postgres p95 @ 2K (ms)"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-fs-2k",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_headline",
+                  "fields": [
+                    {
+                      "name": "max(fs_p95_2k)",
+                      "expression": "MAX(`fs_p95_2k`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(fs_p95_2k)",
+                  "displayName": "Feature Serving p95 @ 2K (ms)",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Feature Serving p95 @ 2K (ms)"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-dataapi-2k",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_headline",
+                  "fields": [
+                    {
+                      "name": "max(dataapi_p95_2k)",
+                      "expression": "MAX(`dataapi_p95_2k`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(dataapi_p95_2k)",
+                  "displayName": "Data API p95 @ 2K (ms)",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Data API p95 @ 2K (ms)"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "section-menu",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Latency menu by access path (notebook 05, open-loop target QPS)"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "table-at-2k",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_at_2k",
+                  "fields": [
+                    {
+                      "name": "path_label",
+                      "expression": "`path_label`"
+                    },
+                    {
+                      "name": "lakebase_cu",
+                      "expression": "`lakebase_cu`"
+                    },
+                    {
+                      "name": "fs_concurrency",
+                      "expression": "`fs_concurrency`"
+                    },
+                    {
+                      "name": "achieved_qps",
+                      "expression": "`achieved_qps`"
+                    },
+                    {
+                      "name": "p50_ms",
+                      "expression": "`p50_ms`"
+                    },
+                    {
+                      "name": "p95_ms",
+                      "expression": "`p95_ms`"
+                    },
+                    {
+                      "name": "p99_ms",
+                      "expression": "`p99_ms`"
+                    },
+                    {
+                      "name": "failures",
+                      "expression": "`failures`"
+                    },
+                    {
+                      "name": "slo_pass",
+                      "expression": "`slo_pass`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "path_label",
+                    "displayName": "Path"
+                  },
+                  {
+                    "fieldName": "lakebase_cu",
+                    "displayName": "Lakebase CU"
+                  },
+                  {
+                    "fieldName": "fs_concurrency",
+                    "displayName": "FS concurrency"
+                  },
+                  {
+                    "fieldName": "achieved_qps",
+                    "displayName": "Achieved QPS"
+                  },
+                  {
+                    "fieldName": "p50_ms",
+                    "displayName": "p50 ms"
+                  },
+                  {
+                    "fieldName": "p95_ms",
+                    "displayName": "p95 ms"
+                  },
+                  {
+                    "fieldName": "p99_ms",
+                    "displayName": "p99 ms"
+                  },
+                  {
+                    "fieldName": "failures",
+                    "displayName": "Failed/unfinished"
+                  },
+                  {
+                    "fieldName": "slo_pass",
+                    "displayName": "SLO"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Latency at 2,000 QPS by path and configuration (selected run, fastest first)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "table-menu",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_path_menu",
+                  "fields": [
+                    {
+                      "name": "series",
+                      "expression": "`series`"
+                    },
+                    {
+                      "name": "max_qps_within_slo",
+                      "expression": "`max_qps_within_slo`"
+                    },
+                    {
+                      "name": "p50_ms",
+                      "expression": "`p50_ms`"
+                    },
+                    {
+                      "name": "p95_ms",
+                      "expression": "`p95_ms`"
+                    },
+                    {
+                      "name": "p99_ms",
+                      "expression": "`p99_ms`"
+                    },
+                    {
+                      "name": "connections_at_max",
+                      "expression": "`connections_at_max`"
+                    },
+                    {
+                      "name": "first_unstable_qps",
+                      "expression": "`first_unstable_qps`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "series",
+                    "displayName": "Path \u00b7 config"
+                  },
+                  {
+                    "fieldName": "max_qps_within_slo",
+                    "displayName": "Max QPS within SLO"
+                  },
+                  {
+                    "fieldName": "p50_ms",
+                    "displayName": "p50 ms"
+                  },
+                  {
+                    "fieldName": "p95_ms",
+                    "displayName": "p95 ms"
+                  },
+                  {
+                    "fieldName": "p99_ms",
+                    "displayName": "p99 ms"
+                  },
+                  {
+                    "fieldName": "connections_at_max",
+                    "displayName": "Connections at max"
+                  },
+                  {
+                    "fieldName": "first_unstable_qps",
+                    "displayName": "First unstable QPS"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Pick your path: highest offered QPS that met the SLO (\u2265 = never broke in this ladder)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "line-path-p95",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_path_ladder",
+                  "fields": [
+                    {
+                      "name": "target_qps",
+                      "expression": "`target_qps`"
+                    },
+                    {
+                      "name": "avg(p95_ms)",
+                      "expression": "AVG(`p95_ms`)"
+                    },
+                    {
+                      "name": "series",
+                      "expression": "`series`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "target_qps",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Offered QPS"
+                },
+                "y": {
+                  "fieldName": "avg(p95_ms)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "p95 ms"
+                },
+                "color": {
+                  "fieldName": "series",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Path \u00b7 config"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "p95 latency vs offered QPS"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 16,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "line-path-qps",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_path_ladder",
+                  "fields": [
+                    {
+                      "name": "target_qps",
+                      "expression": "`target_qps`"
+                    },
+                    {
+                      "name": "avg(achieved_qps)",
+                      "expression": "AVG(`achieved_qps`)"
+                    },
+                    {
+                      "name": "series",
+                      "expression": "`series`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "target_qps",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Offered QPS"
+                },
+                "y": {
+                  "fieldName": "avg(achieved_qps)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Achieved QPS"
+                },
+                "color": {
+                  "fieldName": "series",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Path \u00b7 config"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Achieved vs offered QPS (flat line = path saturated)"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 16,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "table-path-curve",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_path_ladder",
+                  "fields": [
+                    {
+                      "name": "series",
+                      "expression": "`series`"
+                    },
+                    {
+                      "name": "target_qps",
+                      "expression": "`target_qps`"
+                    },
+                    {
+                      "name": "achieved_qps",
+                      "expression": "`achieved_qps`"
+                    },
+                    {
+                      "name": "p50_ms",
+                      "expression": "`p50_ms`"
+                    },
+                    {
+                      "name": "p95_ms",
+                      "expression": "`p95_ms`"
+                    },
+                    {
+                      "name": "p99_ms",
+                      "expression": "`p99_ms`"
+                    },
+                    {
+                      "name": "failures",
+                      "expression": "`failures`"
+                    },
+                    {
+                      "name": "connections",
+                      "expression": "`connections`"
+                    },
+                    {
+                      "name": "client_bound",
+                      "expression": "`client_bound`"
+                    },
+                    {
+                      "name": "slo_pass",
+                      "expression": "`slo_pass`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "series",
+                    "displayName": "Path \u00b7 config"
+                  },
+                  {
+                    "fieldName": "target_qps",
+                    "displayName": "Offered QPS"
+                  },
+                  {
+                    "fieldName": "achieved_qps",
+                    "displayName": "Achieved QPS"
+                  },
+                  {
+                    "fieldName": "p50_ms",
+                    "displayName": "p50 ms"
+                  },
+                  {
+                    "fieldName": "p95_ms",
+                    "displayName": "p95 ms"
+                  },
+                  {
+                    "fieldName": "p99_ms",
+                    "displayName": "p99 ms"
+                  },
+                  {
+                    "fieldName": "failures",
+                    "displayName": "Failed/unfinished"
+                  },
+                  {
+                    "fieldName": "connections",
+                    "displayName": "Connections"
+                  },
+                  {
+                    "fieldName": "client_bound",
+                    "displayName": "Client-bound"
+                  },
+                  {
+                    "fieldName": "slo_pass",
+                    "displayName": "SLO"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Full curve per path (client-bound rows: generator was the limit, not the path)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 22,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "section-trends",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Feature Serving smoke + ramp (notebook 03, Locust, latest run: smoke unpaced, ramp paced to 2,000 QPS)"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 28,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "line-qps",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_history",
+                  "fields": [
+                    {
+                      "name": "elapsed_s",
+                      "expression": "`elapsed_s`"
+                    },
+                    {
+                      "name": "avg(qps)",
+                      "expression": "AVG(`qps`)"
+                    },
+                    {
+                      "name": "phase",
+                      "expression": "`phase`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "elapsed_s",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Seconds since run start"
+                },
+                "y": {
+                  "fieldName": "avg(qps)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Requests / sec"
+                },
+                "color": {
+                  "fieldName": "phase",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Achieved QPS"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 29,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "line-p95",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_history",
+                  "fields": [
+                    {
+                      "name": "elapsed_s",
+                      "expression": "`elapsed_s`"
+                    },
+                    {
+                      "name": "avg(p95_ms)",
+                      "expression": "AVG(`p95_ms`)"
+                    },
+                    {
+                      "name": "phase",
+                      "expression": "`phase`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "elapsed_s",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Seconds since run start"
+                },
+                "y": {
+                  "fieldName": "avg(p95_ms)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "p95 ms"
+                },
+                "color": {
+                  "fieldName": "phase",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "p95 latency"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 29,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "section-capacity",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Feature Serving by phase (latest run of notebooks 03, 06, 07)"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 35,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "bar-qps-phase",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_fs_phases",
+                  "fields": [
+                    {
+                      "name": "phase",
+                      "expression": "`phase`"
+                    },
+                    {
+                      "name": "avg(qps)",
+                      "expression": "AVG(`qps`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "phase",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Phase"
+                },
+                "y": {
+                  "fieldName": "avg(qps)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "QPS"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "QPS by phase (Feature Serving)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 36,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "bar-p95-phase",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_fs_phases",
+                  "fields": [
+                    {
+                      "name": "phase",
+                      "expression": "`phase`"
+                    },
+                    {
+                      "name": "avg(p95_ms)",
+                      "expression": "AVG(`p95_ms`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "phase",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Phase"
+                },
+                "y": {
+                  "fieldName": "avg(p95_ms)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "p95 ms"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "p95 by phase (Feature Serving)"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 36,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "table-runs",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_runs",
+                  "fields": [
+                    {
+                      "name": "started_at",
+                      "expression": "`started_at`"
+                    },
+                    {
+                      "name": "phase",
+                      "expression": "`phase`"
+                    },
+                    {
+                      "name": "access_path",
+                      "expression": "`access_path`"
+                    },
+                    {
+                      "name": "users",
+                      "expression": "`users`"
+                    },
+                    {
+                      "name": "qps",
+                      "expression": "`qps`"
+                    },
+                    {
+                      "name": "p50_ms",
+                      "expression": "`p50_ms`"
+                    },
+                    {
+                      "name": "p95_ms",
+                      "expression": "`p95_ms`"
+                    },
+                    {
+                      "name": "failures",
+                      "expression": "`failures`"
+                    },
+                    {
+                      "name": "slo_pass",
+                      "expression": "`slo_pass`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "started_at",
+                    "displayName": "Started"
+                  },
+                  {
+                    "fieldName": "phase",
+                    "displayName": "Phase"
+                  },
+                  {
+                    "fieldName": "access_path",
+                    "displayName": "Path"
+                  },
+                  {
+                    "fieldName": "users",
+                    "displayName": "Clients"
+                  },
+                  {
+                    "fieldName": "qps",
+                    "displayName": "QPS"
+                  },
+                  {
+                    "fieldName": "p50_ms",
+                    "displayName": "p50 ms"
+                  },
+                  {
+                    "fieldName": "p95_ms",
+                    "displayName": "p95 ms"
+                  },
+                  {
+                    "fieldName": "failures",
+                    "displayName": "Failures"
+                  },
+                  {
+                    "fieldName": "slo_pass",
+                    "displayName": "SLO"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Phase results"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 41,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "table-failures",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_failures",
+                  "fields": [
+                    {
+                      "name": "phase",
+                      "expression": "`phase`"
+                    },
+                    {
+                      "name": "classified",
+                      "expression": "`classified`"
+                    },
+                    {
+                      "name": "error",
+                      "expression": "`error`"
+                    },
+                    {
+                      "name": "occurrences",
+                      "expression": "`occurrences`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "phase",
+                    "displayName": "Phase"
+                  },
+                  {
+                    "fieldName": "classified",
+                    "displayName": "Class"
+                  },
+                  {
+                    "fieldName": "error",
+                    "displayName": "Error body"
+                  },
+                  {
+                    "fieldName": "occurrences",
+                    "displayName": "Count"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Locust failure bodies, latest notebook 03 run (empty = no failures)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 47,
+            "width": 12,
+            "height": 4
+          }
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#FCFCFC",
+        "dark": "#1F272D"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#11171C"
+      },
+      "fontColor": {
+        "light": "#11171C",
+        "dark": "#E8ECF0"
+      },
+      "selectionColor": {
+        "light": "#2272B4",
+        "dark": "#8ACAFF"
+      },
+      "visualizationColors": [
+        "#094074",
+        "#3C6997",
+        "#FE9000",
+        "#FF7054",
+        "#99DDB4",
+        "#5ADBFF",
+        "#FFDD4A"
+      ],
+      "widgetHeaderAlignment": "LEFT"
+    }
+  }
+}

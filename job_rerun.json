@@ -1,0 +1,78 @@
+{
+  "name": "ofs-loadtest",
+  "max_concurrent_runs": 1,
+  "timeout_seconds": 14400,
+  "environments": [
+    {
+      "environment_key": "sv",
+      "spec": {
+        "environment_version": "4"
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "task_key": "n03_locust",
+      "notebook_task": {
+        "notebook_path": "/Users/you@example.com/ofs-loadtest/03_locust_run",
+        "source": "WORKSPACE"
+      },
+      "timeout_seconds": 3600,
+      "job_cluster_key": "generator_32vcpu"
+    },
+    {
+      "task_key": "n05_stress",
+      "depends_on": [
+        {
+          "task_key": "n03_locust"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Users/you@example.com/ofs-loadtest/05_stress",
+        "source": "WORKSPACE",
+        "base_parameters": {
+          "access_paths": "fs,dataapi,pg",
+          "lakebase_cu": ""
+        }
+      },
+      "timeout_seconds": 7200,
+      "job_cluster_key": "generator_32vcpu",
+      "run_if": "ALL_DONE"
+    },
+    {
+      "task_key": "n06_soak",
+      "depends_on": [
+        {
+          "task_key": "n05_stress"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Users/you@example.com/ofs-loadtest/06_soak",
+        "source": "WORKSPACE"
+      },
+      "environment_key": "sv",
+      "timeout_seconds": 3600,
+      "run_if": "ALL_DONE"
+    }
+  ],
+  "job_clusters": [
+    {
+      "job_cluster_key": "generator_32vcpu",
+      "new_cluster": {
+        "spark_version": "17.3.x-scala2.13",
+        "node_type_id": "c6id.8xlarge",
+        "num_workers": 0,
+        "data_security_mode": "SINGLE_USER",
+        "single_user_name": "you@example.com",
+        "spark_conf": {
+          "spark.databricks.cluster.profile": "singleNode",
+          "spark.master": "local[*]"
+        },
+        "custom_tags": {
+          "ResourceClass": "SingleNode",
+          "purpose": "ofs-loadtest-generator"
+        }
+      }
+    }
+  ]
+}
