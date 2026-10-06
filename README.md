@@ -218,3 +218,7 @@ Synthetic 4M-row table, 20 numeric features, uniform keys, single-key lookups, 3
 - Feature Serving's backend (`application_name = feature_store_lookup`) opened **~340 connections** per 256–512 endpoint as soon as traffic started (up to ~600 at 16–32 CU) and held them. The Data API kept a **~200-connection** pool.
 - At 2 CU (450 slots) those two alone exceed the limit: Feature Serving times out and new Postgres connections are refused; the pooled host keeps working because PgBouncer already holds its backend connections. Earlier 2 and 4 CU runs with two Feature Serving endpoints and 256 Postgres connections failed on every path.
 - **Rule:** keep *Σ Feature Serving backend pools + Data API pool + application pools (QPS × latency)* under `max_connections` with headroom. Here, 4 CU served Postgres and one Feature Serving endpoint at 2K QPS with no latency penalty; the Data API needed ≥ 16 CU for 2K QPS.
+
+## License
+
+MIT; see [LICENSE](LICENSE). Provided as is, without warranty of any kind. This is an independent test harness, not an official Databricks product or benchmark; run it in your own workspace and validate the results for your workload.
